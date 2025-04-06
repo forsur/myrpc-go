@@ -1,54 +1,46 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"MyRPC"
-	"MyRPC/codec"
+	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
 func startSvr(addr chan string) {
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", ":0") // l 是 listener
 	if err != nil {
 		log.Fatal("network error:", err)
 	}
 	log.Println("start rpc server on", l.Addr())
-	addr <- l.Addr().String()
+	addr <- l.Addr().String() // 将服务端监听的地址发送给主协程
 	myrpc.Accept(l)
 }
 
 func main() {
-	addr := make(chan string)
+	log.SetFlags(0)
+	addr := make(chan string) // 具体的地址是需要从协程外传入的，所以需要将 channel 作为函数参数
 	go startSvr(addr)
-
-	// client
-	conn, _ := net.Dial("tcp", <-addr)
+	client, _ := myrpc.Dail("tcp", <- addr) // 连接的同时 NewClient，启动了一个 receive 协程 
 	defer func() {
-		_ = conn.Close()
+		client.Close()
 	}()
 
 	time.Sleep(time.Second)
-	_ = json.NewEncoder(conn).Encode(myrpc.DefaultOption) // 构造 option
-	
-	// 构造一个新的编解码器，并绑定 socket
-	cc := codec.NewGobCodec(conn)
-	
-	// 发送请求 / 接收响应
+	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		// 发送
-		h := &codec.Header{
-			ServiceMethod: "Foo.Sum",
-			Seq: uint64(i),
-		}
-		_ = cc.Write(h, fmt.Sprintf("rpc request %d", h.Seq)) // 发送消息头和消息体
-
-		// 接收
-		_ = cc.ReadHeader(h)
-		var reply string
-		_ = cc.ReadBody(&reply)
-		log.Println("reply:", reply)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			args := fmt.Sprintf("myrpc request no.%d", i)
+			var reply string
+			if err := client.SyncCall("Service.Sum", args, &reply); err != nil {
+				log.Fatal("rpc call error:", err)
+			}
+			log.Printf("reply to no.%d call: %v\n", i, reply)
+		}(i)
 	}
+	wg.Wait()
 }

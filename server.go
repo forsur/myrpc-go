@@ -7,6 +7,11 @@
 | Option{MagicNumber: xxx, CodecType: xxx} | Header{ServiceMethod ...} | Body interface{} |
 | <------      固定 JSON 编码      ------>  | <-------    编码方式由 CodeType 决定    ------->|
 
+response 的 header 沿用 request 的 header
+
+工作流程：
+1. 一个 server 每监听到一个连接，就启动一个协程处理这个连接。
+2. 处理连接的协程在每次读出一组数据之后就启动一个子协程，handleRequest
 */
 
 package myrpc
@@ -42,19 +47,20 @@ func NewServer() *Server {
 }
 
 func (svr *Server) Accept(lis net.Listener) {
+	// 每轮循环建立一个与新的客户端的连接
 	for {
-		// socket 是通过 Accept() 得到的
-		conn, err := lis.Accept()
+		// socket 通过 Accept() 得到
+		conn, err := lis.Accept() // 阻塞等待新的客户端的连接，返回一个新的 conn
 		if err != nil {
 			log.Println("rpc server: accept error:", err)
 			return 
 		}
 
-		go svr.WrapConnToCodec(conn)
+		go svr.HandleClient(conn)
 	}
 }
 
-func (svr *Server) WrapConnToCodec(conn io.ReadWriteCloser) {
+func (svr *Server) HandleClient(conn io.ReadWriteCloser) {
 	defer func() {
 		_ = conn.Close()
 	}()
@@ -75,12 +81,17 @@ func (svr *Server) WrapConnToCodec(conn io.ReadWriteCloser) {
 	if f == nil {
 		log.Printf("rpc server: invalid codec type")
 	}
-	svr.serveCodec(f(conn))
+	svr.serveClient(f(conn))
 }
 
 var invalidRequest = struct{}{} // 出错时的空占位符
 
-func (svr *Server) serveCodec(cc codec.Codec) { // 此时传入的为经过 NewCodecFunc 作用的 codec.Codec 结构体
+
+
+/*
+ * 处理每个客户端请求的主体逻辑，使用与客户端一一对应的 Mutex 保证回信的有序性
+*/
+func (svr *Server) serveClient(cc codec.Codec) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
@@ -100,6 +111,8 @@ func (svr *Server) serveCodec(cc codec.Codec) { // 此时传入的为经过 NewC
 	wg.Wait()
 	_ = cc.Close()
 }
+
+
 
 type request struct {
 	h *codec.Header
@@ -133,7 +146,7 @@ func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 }
 
 // 返回 response
-// 使用锁保证写入 buf 时不会出现数据竞争
+// 使用锁保证返回的数据是有序的
 func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
 	defer sending.Unlock()
@@ -146,7 +159,7 @@ func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{
 func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Println(req.h, req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("myrpc resp %d", req.h.Seq))
+	req.replyv = reflect.ValueOf(fmt.Sprintf("myrpc resp %v", req.argv.Elem()))
 	svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
 }
 
