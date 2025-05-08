@@ -88,9 +88,9 @@ var invalidRequest = struct{}{} // 出错时的空占位符
 
 
 
-/*
- * 处理每个客户端请求的主体逻辑，使用与客户端一一对应的 Mutex 保证回信的有序性
-*/
+
+// 一个客户端的可能会连续发送多个请求
+// 处理每个客户端请求的主体逻辑，使用与客户端一一对应的 Mutex 保证 response 不会发生并发混乱
 func (svr *Server) serveClient(cc codec.Codec) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
@@ -145,22 +145,20 @@ func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 	return &h, nil
 }
 
-// 返回 response
-// 使用锁保证返回的数据是有序的
+func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+	defer wg.Done()
+	log.Println(req.h, req.argv.Elem())
+	req.replyv = reflect.ValueOf(fmt.Sprintf("myrpc resp %v", req.argv.Elem()))
+	svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+}
+
+// 将传入的 rsp header 和 rsp body 作为 rsp 写入到 conn
 func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
 	defer sending.Unlock()
 	if err := cc.Write(h, body); err != nil {
 		log.Println("rpc server: write response error:", err)
 	}
-}
-
-// 处理 request （本质上也是 sendResponse）
-func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
-	defer wg.Done()
-	log.Println(req.h, req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("myrpc resp %v", req.argv.Elem()))
-	svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
 }
 
 // 方便使用

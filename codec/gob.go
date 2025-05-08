@@ -27,7 +27,7 @@ func NewGobCodec(conn io.ReadWriteCloser) Codec {
 	return &GobCodec {
 		conn: conn,
 		buf: buf,
-		dec: gob.NewDecoder(conn), // 创建解码器从连接读取数据，conn 作为输入
+		dec: gob.NewDecoder(conn), // 创建解码器从连接读取数据，从 conn 中读
 		enc: gob.NewEncoder(buf), // 创建编码器，写入 buf
 	}
 }

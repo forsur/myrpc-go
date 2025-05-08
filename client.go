@@ -36,7 +36,7 @@ type Call struct {
 	Args interface{}
 	Reply interface{}
 	Error error
-	Done chan *Call // 传递指向 Call 类型的指针的 channel
+	Done chan *Call // 用于接受 receive 拿到的返回
 }
 
 func (call *Call) done() {
@@ -112,7 +112,7 @@ func (client *Client) terminateCalls(err error) {
 	}
 }
 
-// 接收响应，运行在一个独立的 goroutine 中
+// 新建客户端时开启的一个协程，顺序读取响应，将处理完的 call 放到 Done 这个 chann 中
 func (client *Client) receive() {
 	var err error
 	for err == nil {
@@ -197,7 +197,7 @@ func Dail(network, address string, opts ...*Option) (client *Client, err error) 
 		return nil, err
 	}
 
-	defer func() { // 在 执行了 return 之后，但是真正返回直线执行
+	defer func() {
 		if client == nil {
 			_ = conn.Close()
 		}
@@ -206,6 +206,7 @@ func Dail(network, address string, opts ...*Option) (client *Client, err error) 
 	return NewClient(conn, opt)
 }
 
+/* 加锁发送请求 */
 func (client *Client) send(call *Call) {
 	client.sending.Lock()
 	defer client.sending.Unlock()
@@ -241,6 +242,7 @@ func (client *Client) send(call *Call) {
 
 // 暴露给框架使用者的接口
 
+// 异步：传入一个 channel，在 send 之后直接返回，等 receive() 协程异步写入传入的 done channel
 func (client *Client) AsyncCall(serviceMethod string, args, reply interface{}, done chan *Call) *Call {
 	if done == nil {
 		done = make(chan *Call, 10) // 允许在没有立即消费的情况下存储一定数量的值
@@ -257,9 +259,9 @@ func (client *Client) AsyncCall(serviceMethod string, args, reply interface{}, d
 	return call
 }
 
+// 同步
 func (client *Client) SyncCall(serviceMethod string, args, reply interface{}) error {
-	// 此处 channel 缓冲区大小设置为 1，表示不阻塞 call 的返回
-	call := <- client.AsyncCall(serviceMethod, args, reply, make(chan *Call, 1)).Done
+	call := <- client.AsyncCall(serviceMethod, args, reply, make(chan *Call, 1)).Done // 直到 call.Done 这个 chann 中收到了返回的消息之后，才不空，可以 <-
 	return call.Error
 }
 
