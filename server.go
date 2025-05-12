@@ -64,11 +64,13 @@ func (svr *Server) Accept(lis net.Listener) {
 			return 
 		}
 
-		go svr.HandleClient(conn)
+		go svr.ServeConn(conn)
 	}
 }
 
-func (svr *Server) HandleClient(conn io.ReadWriteCloser) {
+
+// 以连接 (conn) 为单位处理请求
+func (svr *Server) ServeConn(conn io.ReadWriteCloser) {
 	defer func() {
 		_ = conn.Close()
 	}()
@@ -89,7 +91,7 @@ func (svr *Server) HandleClient(conn io.ReadWriteCloser) {
 	if f == nil {
 		log.Printf("rpc server: invalid codec type")
 	}
-	svr.serveClient(f(conn))
+	svr.serveCodec(f(conn))
 }
 
 var invalidRequest = struct{}{} // 出错时的空占位符
@@ -99,7 +101,7 @@ var invalidRequest = struct{}{} // 出错时的空占位符
 
 // 一个客户端的可能会连续发送多个请求
 // 处理每个客户端请求的主体逻辑，使用与客户端一一对应的 Mutex 保证 response 不会发生并发混乱
-func (svr *Server) serveClient(cc codec.Codec) {
+func (svr *Server) serveCodec(cc codec.Codec) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
