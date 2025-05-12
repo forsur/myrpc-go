@@ -40,11 +40,19 @@ var DefaultOption = &Option {
 }
 
 
-type Server struct{} 
+type Server struct{
+	serviceMap sync.Map
+} 
 
 func NewServer() *Server {
 	return &Server{}
 }
+
+
+func (svr *Server) Register(rcvr interface{}) error {
+	s := newService(rcvr) // rcvr 类似于 AuthServiceImpl，是一个绑定了若干 rpc 方法的结构体
+}
+
 
 func (svr *Server) Accept(lis net.Listener) {
 	// 每轮循环建立一个与新的客户端的连接
