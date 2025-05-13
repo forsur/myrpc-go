@@ -20,7 +20,6 @@ import (
 	"MyRPC/codec"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
