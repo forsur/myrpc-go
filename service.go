@@ -46,8 +46,8 @@ func (m *methodType) newReplyv() reflect.Value {
 type service struct {
 	name string
 	typ reflect.Type
-	rcvr reflect.Value
-	method map[string]*methodType
+	rcvr reflect.Value // service 对应的绑定了 rpc 方法的结构体
+	method map[string]*methodType // 注意 methodType 结构体
 }
 
 func newService(rcvr interface{}) *service {
@@ -57,12 +57,13 @@ func newService(rcvr interface{}) *service {
 	s.name = reflect.Indirect(s.rcvr).Type().Name()
 	s.typ = reflect.TypeOf(rcvr)
 	if !ast.IsExported(s.name) {
-		log.Fatal("rpc server: %s is not a valid service name", s.name)
+		log.Fatalf("rpc server: %s is not a valid service name", s.name)
 	}
 	s.registerMethods()
 	return s
 }
 
+// 组装好完整的 methodType 结构体
 func (s *service) registerMethods() {
 	s.method = make(map[string]*methodType)
 	for i := 0; i < s.typ.NumMethod(); i++ {
@@ -95,7 +96,7 @@ func isExportedOrBuiltinType(t reflect.Type) bool {
 func (s *service) call(m *methodType, argv, replyv reflect.Value) error {
 	atomic.AddUint64(&m.numCalls, 1)
 	f := m.method.Func
-	returnValues := f.Call([]reflect.Value{s.rcvr, argv, replyv})
+	returnValues := f.Call([]reflect.Value{s.rcvr, argv, replyv}) // 这里的 call 的第一个参数是结构体（方法绑定到了结构体）
 	// 远程调用不应该有非 nil 的返回值
 	err := returnValues[0].Interface() 
 	if err != nil {

@@ -37,7 +37,7 @@ func (c *GobCodec) ReadHeader(h *Header) error {
 	return c.dec.Decode(h) // 将解码后的内容写到 h 中，这里传入的 h 相当于一个固定形状的容器
 }
 
-// 从 Header 之后的位置开始，读取完整 Body 数据
+// body 的 .Type.Kind() 需要是指针类型，因为会将解码的数据写入 body 位置
 func (c *GobCodec) ReadBody(body interface{}) error {
 	return c.dec.Decode(body)
 }

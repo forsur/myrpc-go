@@ -19,40 +19,66 @@ package myrpc
 import (
 	"MyRPC/codec"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
-	"fmt"
 )
 
 const MagicNumber = 0x3bef5c
 
 type Option struct {
 	MagicNumber int // 标记这是一个 myrpc 的 request
-	CodecType codec.Type
+	CodecType   codec.Type
 }
 
-var DefaultOption = &Option {
+var DefaultOption = &Option{
 	MagicNumber: MagicNumber,
-	CodecType: codec.GobType,
+	CodecType:   codec.GobType,
 }
 
-
-type Server struct{
+type Server struct {
 	serviceMap sync.Map
-} 
+}
 
 func NewServer() *Server {
 	return &Server{}
 }
 
-
+// 注册服务到 sync.Map 中
 func (svr *Server) Register(rcvr interface{}) error {
 	s := newService(rcvr) // rcvr 类似于 AuthServiceImpl，是一个绑定了若干 rpc 方法的结构体
+	_, isDup := svr.serviceMap.LoadOrStore(s.name, s)
+	if isDup {
+		return errors.New("server: service already exist" + s.name)
+	}
+	return nil
 }
 
+func (server *Server) findService(serviceMethod string) (svc *service, mtype *methodType, err error) {
+	dotIdx := strings.LastIndex(serviceMethod, ".")
+	if dotIdx < 0 {
+		err = errors.New("server: wrong service.method format")
+		return
+	}
+	serviceName, methodName := serviceMethod[:dotIdx], serviceMethod[dotIdx+1:]
+	serviceStruct, ok := server.serviceMap.Load(serviceName)
+	if !ok {
+		err = errors.New("server: cann't find service")
+		return
+	}
+	svc = serviceStruct.(*service)
+	mtype = svc.method[methodName]
+	if mtype == nil {
+		err = errors.New("server: can't find method")
+		return
+	}
+	return
+}
 
 func (svr *Server) Accept(lis net.Listener) {
 	// 每轮循环建立一个与新的客户端的连接
@@ -61,20 +87,19 @@ func (svr *Server) Accept(lis net.Listener) {
 		conn, err := lis.Accept() // 阻塞等待新的客户端的连接，返回一个新的 conn
 		if err != nil {
 			log.Println("rpc server: accept error:", err)
-			return 
+			return
 		}
 
 		go svr.ServeConn(conn)
 	}
 }
 
-
 // 以连接 (conn) 为单位处理请求
 func (svr *Server) ServeConn(conn io.ReadWriteCloser) {
 	defer func() {
 		_ = conn.Close()
 	}()
-	
+
 	// option 字段是使用 json 序列化的
 	var opt Option
 	if err := json.NewDecoder(conn).Decode(&opt); err != nil {
@@ -96,16 +121,13 @@ func (svr *Server) ServeConn(conn io.ReadWriteCloser) {
 
 var invalidRequest = struct{}{} // 出错时的空占位符
 
-
-
-
 // 一个客户端的可能会连续发送多个请求
 // 处理每个客户端请求的主体逻辑，使用与客户端一一对应的 Mutex 保证 response 不会发生并发混乱
 func (svr *Server) serveCodec(cc codec.Codec) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
-		req, err := svr.readRequest(cc) 
+		req, err := svr.readRequest(cc)
 		if err != nil {
 			if req == nil {
 				break
@@ -122,27 +144,43 @@ func (svr *Server) serveCodec(cc codec.Codec) {
 	_ = cc.Close()
 }
 
-
-
 type request struct {
-	h *codec.Header
-	argv, replyv reflect.Value // 任意类型
+	h            *codec.Header
+	argv, replyv reflect.Value
+	mtype 		 *methodType
+	svc 		 *service
 }
 
-// 读请求，gob 编码可以保证读取出的数据为 header + body
+// 最终目标是取得 argv 类型的指针，供 cc.ReadBody() 使用
 func (svr *Server) readRequest(cc codec.Codec) (*request, error) {
 	h, err := svr.readRequestHeader(cc)
 	if err != nil {
-		return nil ,err
+		return nil, err
 	}
 	req := &request{h: h}
-	// 下面假设 body 为 string
-	req.argv = reflect.New(reflect.TypeOf("")) // 空字符串类型的指针
-	if err = cc.ReadBody(req.argv.Interface()); err != nil { 
-		log.Println("rpc sever: read argv err:", err)
+	req.svc, req.mtype, err = svr.findService(h.ServiceMethod)
+	if err != nil {
+		return req, err
 	}
+
+	// 基于 server 端 map 中存储的 method 信息拿到参数和返回值信息
+	req.argv = req.mtype.newArgv()
+	req.replyv = req.mtype.newReplyv()
+
+	argvi := req.argv.Interface() // 通过 reflect.Value 获取原始值（空）
+	if req.argv.Type().Kind() != reflect.Ptr {
+		argvi = req.argv.Addr().Interface() // 转为指针
+	}
+	
+	err = cc.ReadBody(argvi)
+	if err != nil {
+		log.Println("server: code.Codec ReadBody() wrong")
+		return req, err
+	}
+
 	return req, nil
 }
+
 
 func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 	var h codec.Header
@@ -157,8 +195,14 @@ func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 
 func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
 	defer wg.Done()
-	log.Println(req.h, req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("myrpc resp %v", req.argv.Elem()))
+	
+	err := req.svc.call(req.mtype, req.argv, req.replyv)
+	if err != nil {
+		req.h.Error = err.Error()
+		svr.sendResponse(cc, req.h, invalidRequest, sending)
+		return
+	}
+
 	svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
 }
 
@@ -173,6 +217,7 @@ func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{
 
 // 方便使用
 var DefaultServer = NewServer()
+
 func Accept(lis net.Listener) {
 	DefaultServer.Accept(lis)
 }
