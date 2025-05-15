@@ -184,7 +184,7 @@ func parseOptions(opts ...*Option) (*Option, error) { // 可变参数，函数�
 	return opt, nil
 }
 
-// 连接到一个 RPC server
+// 首先建立一个网络连接，然后基于这个连接创建一个 client
 func Dail(network, address string, opts ...*Option) (client *Client, err error) {
 	opt, err := parseOptions(opts...)
 	if err != nil {
