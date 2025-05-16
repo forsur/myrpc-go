@@ -130,6 +130,7 @@ func (client *Client) receive() {
 		case h.Error != "":
 			call.Error = fmt.Errorf("%s", h.Error)
 			err = client.cc.ReadBody(nil)
+			call.done()
 		default:
 			err = client.cc.ReadBody(call.Reply)
 			if err != nil {
@@ -305,8 +306,9 @@ func (client *Client) Call(ctx context.Context, serviceMethod string, args, repl
 	case <- ctx.Done():
 		client.removeCall(call.Seq)
 		return errors.New("client: Call timeout" + ctx.Err().Error())
-	case call := <-call.Done:
-		return call.Error
+	case result := <-call.Done:
+		fmt.Println("received")
+		return result.Error
 	}
 }
 

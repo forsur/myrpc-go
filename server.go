@@ -27,6 +27,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -204,18 +205,19 @@ func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
 
-	called := make(chan struct{})
-	sent := make(chan struct{})
+	called := make(chan struct{}, 1)
+	sent := make(chan struct{}, 1)
 
-	isTimeout := false
+	var isTimeout uint32
+	atomic.StoreUint32(&isTimeout, 0) // 写入（对其他 goroutine 可见）
 
 	go func() {
 		err := req.svc.call(req.mtype, req.argv, req.replyv)
 		fmt.Println("svc call finished")
-		if isTimeout {
+		isTimeoutVal := atomic.LoadUint32(&isTimeout)
+		if isTimeoutVal == 1 {
 			return
 		}
-		fmt.Println("isTimeout == false")
 		called <- struct{}{}
 		if err != nil {
 			req.h.Error = err.Error()
@@ -234,10 +236,8 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 	}
 	select {
 	case <-time.After(timeout):
-		fmt.Println("detected timeout")
-		isTimeout = true
-		req.h.Error = "server: call method timeout"
-		fmt.Println("sending rsp")
+		atomic.StoreUint32(&isTimeout, 1)
+		req.h.Error = "server: execute method timeout"
 		svr.sendResponse(cc, req.h, invalidRequest, sending)
 	case <-called:
 		<-sent
@@ -249,7 +249,7 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 // 将传入的 rsp header 和 rsp body 作为 rsp 写入到 conn
 func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
-	fmt.Printf("called sendResponse,header: %v, body: %v", h, body)
+	fmt.Printf("called sendResponse,header: %v, body: %v\n", h, body)
 	defer sending.Unlock()
 	if err := cc.Write(h, body); err != nil {
 		log.Println("rpc server: write response error:", err)
