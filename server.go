@@ -20,12 +20,14 @@ import (
 	"MyRPC/codec"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 const MagicNumber = 0x3bef5c
@@ -33,11 +35,18 @@ const MagicNumber = 0x3bef5c
 type Option struct {
 	MagicNumber int // 标记这是一个 myrpc 的 request
 	CodecType   codec.Type
+
+	// 超时处理参数
+	ConnectionTimeout time.Duration 
+	HandleTimeout time.Duration
 }
 
 var DefaultOption = &Option{
 	MagicNumber: MagicNumber,
 	CodecType:   codec.GobType,
+
+	// 默认超时时间为 10s
+	ConnectionTimeout: 10 * time.Second,
 }
 
 type Server struct {
@@ -115,14 +124,14 @@ func (svr *Server) ServeConn(conn io.ReadWriteCloser) {
 	if f == nil {
 		log.Printf("rpc server: invalid codec type")
 	}
-	svr.serveCodec(f(conn))
+	svr.serveCodec(f(conn), &opt)
 }
 
 var invalidRequest = struct{}{} // 出错时的空占位符
 
 // 一个客户端的可能会连续发送多个请求
 // 处理每个客户端请求的主体逻辑，使用与客户端一一对应的 Mutex 保证 response 不会发生并发混乱
-func (svr *Server) serveCodec(cc codec.Codec) {
+func (svr *Server) serveCodec(cc codec.Codec, opt *Option) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
@@ -136,7 +145,7 @@ func (svr *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go svr.handleRequest(cc, req, sending, wg)
+		go svr.handleRequest(cc, req, sending, wg, opt.HandleTimeout)
 	}
 
 	wg.Wait()
@@ -192,26 +201,60 @@ func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 	return &h, nil
 }
 
-func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
-	
-	err := req.svc.call(req.mtype, req.argv, req.replyv)
-	if err != nil {
-		req.h.Error = err.Error()
-		svr.sendResponse(cc, req.h, invalidRequest, sending)
+
+	called := make(chan struct{})
+	sent := make(chan struct{})
+
+	isTimeout := false
+
+	go func() {
+		err := req.svc.call(req.mtype, req.argv, req.replyv)
+		fmt.Println("svc call finished")
+		if isTimeout {
+			return
+		}
+		fmt.Println("isTimeout == false")
+		called <- struct{}{}
+		if err != nil {
+			req.h.Error = err.Error()
+			svr.sendResponse(cc, req.h, invalidRequest, sending)
+			sent <- struct{}{}
+			return
+		}
+		svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		sent <- struct{}{}
+	}()
+
+	if timeout == 0 {
+		<- called
+		<- sent
 		return
 	}
+	select {
+	case <-time.After(timeout):
+		fmt.Println("detected timeout")
+		isTimeout = true
+		req.h.Error = "server: call method timeout"
+		fmt.Println("sending rsp")
+		svr.sendResponse(cc, req.h, invalidRequest, sending)
+	case <-called:
+		<-sent
+	}
 
-	svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+	fmt.Println("ready to return")
 }
 
 // 将传入的 rsp header 和 rsp body 作为 rsp 写入到 conn
 func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
+	fmt.Printf("called sendResponse,header: %v, body: %v", h, body)
 	defer sending.Unlock()
 	if err := cc.Write(h, body); err != nil {
 		log.Println("rpc server: write response error:", err)
 	}
+	fmt.Println("sendResponse finished")
 }
 
 // 方便使用
@@ -219,4 +262,8 @@ var DefaultServer = NewServer()
 
 func Accept(lis net.Listener) {
 	DefaultServer.Accept(lis)
+}
+
+func Register(rcvr interface{}) error { 
+	return DefaultServer.Register(rcvr) 
 }

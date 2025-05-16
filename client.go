@@ -1,6 +1,6 @@
 /*
 
-当 AsyncCall 返回 Call 实例后，调用方可以开启协程，通过 Done 字段来检查异步调用是否获得了返回结果
+当 Go 返回 Call 实例后，调用方可以开启协程，通过 Done 字段来检查异步调用是否获得了返回结果
 
 传入的 args 和 &reply 这两个结构体分别用来写入 socket 和 承接从 socket 中读出的服务端端响应
 
@@ -19,6 +19,8 @@ client 实例是有状态的，seq 全局递增；一个 client 只在 New Clien
 package myrpc
 
 import (
+	"MyRPC/codec"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +28,7 @@ import (
 	"log"
 	"net"
 	"sync"
-	"MyRPC/codec"
+	"time"
 )
 
 // 支持异步调用，当调用结束时，会调用 call.done() 通知调用方
@@ -126,7 +128,7 @@ func (client *Client) receive() {
 		case call == nil:
 			err = client.cc.ReadBody(nil)
 		case h.Error != "":
-			call.Error = fmt.Errorf(h.Error)
+			call.Error = fmt.Errorf("%s", h.Error)
 			err = client.cc.ReadBody(nil)
 		default:
 			err = client.cc.ReadBody(call.Reply)
@@ -184,29 +186,65 @@ func parseOptions(opts ...*Option) (*Option, error) { // 可变参数，函数�
 	return opt, nil
 }
 
-// 首先建立一个网络连接，然后基于这个连接创建一个 client
-func Dail(network, address string, opts ...*Option) (client *Client, err error) {
+
+type clientResult struct {
+	client *Client
+	err    error
+}
+
+// 为 NewClient() 创建一个对应的类型，用于后面定义函数的参数类型
+type newClientFunc func(conn net.Conn, opt *Option) (client *Client, err error)
+
+func dailWithTimeout(f newClientFunc, network, address string, opts ...*Option) (client *Client, err error) {
 	opt, err := parseOptions(opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	conn, err := net.Dial(network, address)
-
+	/*
+	network: 指定网络协议，如 tcp / udp / unix 等 
+	address: 形如 host:port
+	timeout: 如果超时时间内没有成功连接，返回 error
+	返回一个字节流/数据报的原始连接，如果需要支持应用层协议，如 HTTP 协议可以使用 net/http 库处理
+	阻塞直到连接成功
+	*/
+	conn, err := net.DialTimeout(network, address, opt.ConnectionTimeout)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		if client == nil {
+		if err != nil {
 			_ = conn.Close()
 		}
 	}()
+	ch := make(chan clientResult)
+	// 使用闭包，开启协程异步创建一个 client，通过 chan 拿到返回内容
+	// 防止 NewClient 执行超时
+	go func() {
+		client, err := f(conn, opt)
+		ch <- clientResult{client: client, err: err}
+	}()
+
+	if opt.ConnectionTimeout == 0 { // 不设置超时时间
+		result := <-ch // 阻塞等待创建完成
+		return result.client, result.err
+	}
 	
-	return NewClient(conn, opt)
+	select {
+	case <-time.After(opt.ConnectionTimeout):
+		return nil, fmt.Errorf("client: connect timeout")
+	case result := <-ch:
+		return result.client, result.err
+	}
 }
 
-/* 加锁发送请求 */
+
+func Dial(network, address string, opts ...*Option) (client *Client, err error) {
+	return dailWithTimeout(NewClient, network, address, opts...)
+}
+
+
 func (client *Client) send(call *Call) {
 	client.sending.Lock()
 	defer client.sending.Unlock()
@@ -241,9 +279,10 @@ func (client *Client) send(call *Call) {
 
 
 // 暴露给框架使用者的接口
+// 同步和异步的区别：监听 Call.Done 这个 channel 的工作是交给框架的 client 来做还是交给用户自己做
 
-// 异步：传入一个 channel，在 send 之后直接返回，等 receive() 协程异步写入传入的 done channel
-func (client *Client) AsyncCall(serviceMethod string, args, reply interface{}, done chan *Call) *Call {
+// 异步：传入一个 channel，在 send 之后直接返回，等 receive() 协程异步写入 call 的 Reply
+func (client *Client) Go(serviceMethod string, args, reply interface{}, done chan *Call) *Call {
 	if done == nil {
 		done = make(chan *Call, 10) // 允许在没有立即消费的情况下存储一定数量的值
 	} else if cap(done) == 0 {
@@ -260,9 +299,15 @@ func (client *Client) AsyncCall(serviceMethod string, args, reply interface{}, d
 }
 
 // 同步
-func (client *Client) SyncCall(serviceMethod string, args, reply interface{}) error {
-	call := <- client.AsyncCall(serviceMethod, args, reply, make(chan *Call, 1)).Done // 直到 call.Done 这个 chann 中收到了返回的消息之后，才不空，可以 <-
-	return call.Error
+func (client *Client) Call(ctx context.Context, serviceMethod string, args, reply interface{}) error {
+	call := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
+	select {
+	case <- ctx.Done():
+		client.removeCall(call.Seq)
+		return errors.New("client: Call timeout" + ctx.Err().Error())
+	case call := <-call.Done:
+		return call.Error
+	}
 }
 
 
