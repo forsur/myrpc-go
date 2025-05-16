@@ -33,12 +33,12 @@ import (
 
 // 支持异步调用，当调用结束时，会调用 call.done() 通知调用方
 type Call struct {
-	Seq uint64
+	Seq           uint64
 	ServiceMethod string
-	Args interface{}
-	Reply interface{}
-	Error error
-	Done chan *Call // 用于接受 receive 拿到的返回
+	Args          interface{}
+	Reply         interface{}
+	Error         error
+	Done          chan *Call // 用于接受 receive 拿到的返回
 }
 
 func (call *Call) done() {
@@ -46,15 +46,15 @@ func (call *Call) done() {
 }
 
 type Client struct {
-	cc codec.Codec
-	opt *Option
+	cc      codec.Codec
+	opt     *Option
 	sending sync.Mutex
 	// header codec.Header
-	mu sync.Mutex
-	seq uint64 // 相当于作用域为整个 client 的全局变量，用于分配
-	pending map[uint64]*Call // 存储未处理完的请求，key 为编号
-	closing bool // user 调用了 Close 方法
-	shutdown bool // 置为 true 时表示有错误发生
+	mu       sync.Mutex
+	seq      uint64           // 相当于作用域为整个 client 的全局变量，用于分配
+	pending  map[uint64]*Call // 存储未处理完的请求，key 为编号
+	closing  bool             // user 调用了 Close 方法
+	shutdown bool             // 置为 true 时表示有错误发生
 }
 
 var _ io.Closer = (*Client)(nil) // 通过指向 Client 类型的空指针进行接口实现检查
@@ -163,12 +163,12 @@ func NewClient(conn net.Conn, opt *Option) (*Client, error) {
 
 func newClientCodec(cc codec.Codec, opt *Option) *Client {
 	client := &Client{
-		seq: 1,
-		cc: cc,
-		opt: opt,
+		seq:     1,
+		cc:      cc,
+		opt:     opt,
 		pending: make(map[uint64]*Call),
 	}
-	go client.receive() 
+	go client.receive()
 	return client // 协程的启动不会因为函数的返回而终止，而是在后台执行
 }
 
@@ -187,7 +187,6 @@ func parseOptions(opts ...*Option) (*Option, error) { // 可变参数，函数�
 	return opt, nil
 }
 
-
 type clientResult struct {
 	client *Client
 	err    error
@@ -196,18 +195,18 @@ type clientResult struct {
 // 为 NewClient() 创建一个对应的类型，用于后面定义函数的参数类型
 type newClientFunc func(conn net.Conn, opt *Option) (client *Client, err error)
 
-func dailWithTimeout(f newClientFunc, network, address string, opts ...*Option) (client *Client, err error) {
+func dialWithTimeout(f newClientFunc, network, address string, opts ...*Option) (client *Client, err error) {
 	opt, err := parseOptions(opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	/*
-	network: 指定网络协议，如 tcp / udp / unix 等 
-	address: 形如 host:port
-	timeout: 如果超时时间内没有成功连接，返回 error
-	返回一个字节流/数据报的原始连接，如果需要支持应用层协议，如 HTTP 协议可以使用 net/http 库处理
-	阻塞直到连接成功
+		network: 指定网络协议，如 tcp / udp / unix 等
+		address: 形如 host:port
+		timeout: 如果超时时间内没有成功连接，返回 error
+		返回一个字节流/数据报的原始连接，如果需要支持应用层协议，如 HTTP 协议可以使用 net/http 库处理
+		阻塞直到连接成功
 	*/
 	conn, err := net.DialTimeout(network, address, opt.ConnectionTimeout)
 	if err != nil {
@@ -231,7 +230,7 @@ func dailWithTimeout(f newClientFunc, network, address string, opts ...*Option) 
 		result := <-ch // 阻塞等待创建完成
 		return result.client, result.err
 	}
-	
+
 	select {
 	case <-time.After(opt.ConnectionTimeout):
 		return nil, fmt.Errorf("client: connect timeout")
@@ -240,11 +239,9 @@ func dailWithTimeout(f newClientFunc, network, address string, opts ...*Option) 
 	}
 }
 
-
 func Dial(network, address string, opts ...*Option) (client *Client, err error) {
-	return dailWithTimeout(NewClient, network, address, opts...)
+	return dialWithTimeout(NewClient, network, address, opts...)
 }
-
 
 func (client *Client) send(call *Call) {
 	client.sending.Lock()
@@ -265,8 +262,8 @@ func (client *Client) send(call *Call) {
 
 	header := codec.Header{
 		ServiceMethod: call.ServiceMethod,
-		Seq: seq,
-		Error: "",
+		Seq:           seq,
+		Error:         "",
 	}
 	if err := client.cc.Write(&header, call.Args); err != nil { // 这里的 Write 要防止数据竞争
 		call := client.removeCall(seq)
@@ -276,8 +273,6 @@ func (client *Client) send(call *Call) {
 		}
 	}
 }
-
-
 
 // 暴露给框架使用者的接口
 // 同步和异步的区别：监听 Call.Done 这个 channel 的工作是交给框架的 client 来做还是交给用户自己做
@@ -291,9 +286,9 @@ func (client *Client) Go(serviceMethod string, args, reply interface{}, done cha
 	}
 	call := &Call{
 		ServiceMethod: serviceMethod,
-		Args: args,
-		Reply: reply,
-		Done: done,
+		Args:          args,
+		Reply:         reply,
+		Done:          done,
 	}
 	client.send(call)
 	return call
@@ -303,7 +298,7 @@ func (client *Client) Go(serviceMethod string, args, reply interface{}, done cha
 func (client *Client) Call(ctx context.Context, serviceMethod string, args, reply interface{}) error {
 	call := client.Go(serviceMethod, args, reply, make(chan *Call, 1))
 	select {
-	case <- ctx.Done():
+	case <-ctx.Done():
 		client.removeCall(call.Seq)
 		return errors.New("client: Call timeout" + ctx.Err().Error())
 	case result := <-call.Done:
@@ -311,5 +306,3 @@ func (client *Client) Call(ctx context.Context, serviceMethod string, args, repl
 		return result.Error
 	}
 }
-
-
