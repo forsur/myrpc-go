@@ -265,7 +265,8 @@ func (client *Client) send(call *Call) {
 		Seq:           seq,
 		Error:         "",
 	}
-	if err := client.cc.Write(&header, call.Args); err != nil { // 这里的 Write 要防止数据竞争
+	err = client.cc.Write(&header, call.Args)
+	if err != nil { // 这里的 Write 要防止数据竞争
 		call := client.removeCall(seq)
 		if call != nil {
 			call.Error = err

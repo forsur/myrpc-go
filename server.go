@@ -20,7 +20,6 @@ import (
 	"MyRPC/codec"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -213,7 +212,6 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 
 	go func() {
 		err := req.svc.call(req.mtype, req.argv, req.replyv)
-		fmt.Println("svc call finished")
 		isTimeoutVal := atomic.LoadUint32(&isTimeout)
 		if isTimeoutVal == 1 {
 			return
@@ -242,19 +240,15 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 	case <-called:
 		<-sent
 	}
-
-	fmt.Println("ready to return")
 }
 
 // 将传入的 rsp header 和 rsp body 作为 rsp 写入到 conn
 func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
-	fmt.Printf("called sendResponse,header: %v, body: %v\n", h, body)
 	defer sending.Unlock()
 	if err := cc.Write(h, body); err != nil {
 		log.Println("rpc server: write response error:", err)
 	}
-	fmt.Println("sendResponse finished")
 }
 
 // 方便使用

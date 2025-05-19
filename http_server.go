@@ -43,7 +43,7 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, _ = io.WriteString(w, "405 must CONNECT\n")
 		return
 	}
-	conn, _, err := w.(http.Hijacker).Hijack()
+	conn, _, err := w.(http.Hijacker).Hijack() // 此后使用 TCP 连接，不再受限于 HTTP 的请求 - 响应模式
 	if err != nil {
 		log.Print("rpc hijacking", req.RemoteAddr, ": ", err.Error())
 		return
