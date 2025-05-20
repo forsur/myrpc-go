@@ -18,6 +18,7 @@ package myrpc
 
 import (
 	"MyRPC/codec"
+	"MyRPC/registry"
 	"encoding/json"
 	"errors"
 	"io"
@@ -53,8 +54,13 @@ type Server struct {
 	serviceMap sync.Map
 }
 
-func NewServer() *Server {
-	return &Server{}
+func NewServer(registryAddr string, svr chan *Server) {
+	l, _ := net.Listen("tcp", ":0")
+	server := Server{}
+	// 新起的 server 定期向 registry 发送心跳
+	registry.Heartbeat(registryAddr, "tcp@" + l.Addr().String(), 0)
+	svr <- &server
+	server.Accept(l)
 }
 
 // 注册服务到 sync.Map 中
@@ -251,13 +257,3 @@ func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{
 	}
 }
 
-// 方便使用
-var DefaultServer = NewServer()
-
-func Accept(lis net.Listener) {
-	DefaultServer.Accept(lis)
-}
-
-func Register(rcvr interface{}) error { 
-	return DefaultServer.Register(rcvr) 
-}

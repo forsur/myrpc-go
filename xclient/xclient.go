@@ -42,7 +42,7 @@ func (xc *XClient) Close() error {
 func (xc *XClient) dial(rpcAddr string) (*myrpc.Client, error) {
 	xc.mu.Lock()
 	defer xc.mu.Unlock()
-	client := xc.clients[rpcAddr] // map 中添加服务端地址 rpcAddr 和 client 的映射
+	client := xc.clients[rpcAddr] // map 中添加服务端地址 rpcAddr 和 client 的映射，缓存起来
 	if client == nil {
 		var err error
 		client, err = myrpc.XDial(rpcAddr, xc.opt)
@@ -54,7 +54,7 @@ func (xc *XClient) dial(rpcAddr string) (*myrpc.Client, error) {
 	return client, nil
 }
 
-func (xc *XClient) call(rpcAddr string, ctx context.Context, serviceMethod string, args, reply interface{}) error {
+func (xc *XClient) callWithAddr(rpcAddr string, ctx context.Context, serviceMethod string, args, reply interface{}) error {
 	client, err := xc.dial(rpcAddr)
 	if err != nil {
 		return err
@@ -62,12 +62,14 @@ func (xc *XClient) call(rpcAddr string, ctx context.Context, serviceMethod strin
 	return client.Call(ctx, serviceMethod, args, reply)
 }
 
+// 客户端对外提供的调用 rpc 接口的 api
+// 但是对于同一个地址的所有请求都是通过同一个 Client 来发送和接收的
 func (xc *XClient) Call(ctx context.Context, serviceMethod string, args, reply interface{}) error {
 	rpcAddr, err := xc.d.Get(xc.mode)
 	if err != nil {
 		return err
 	}
-	return xc.call(rpcAddr, ctx, serviceMethod, args, reply)
+	return xc.callWithAddr(rpcAddr, ctx, serviceMethod, args, reply)
 }
 
 
@@ -89,7 +91,7 @@ func (xc *XClient) Broadcast(ctx context.Context, serviceMethod string, args, re
 			if reply != nil { // 检查 rpc 方法是否有返回值
 				replyPtr = reflect.New(reflect.ValueOf(reply).Elem().Type()).Interface()
 			}
-			err := xc.call(rpcAddr, ctx, serviceMethod, args, replyPtr)
+			err := xc.callWithAddr(rpcAddr, ctx, serviceMethod, args, replyPtr)
 			mu.Lock()
 			if err != nil && e == nil {
 				e = err
@@ -104,4 +106,5 @@ func (xc *XClient) Broadcast(ctx context.Context, serviceMethod string, args, re
 	wg.Wait()
 	return e
 }
+
 

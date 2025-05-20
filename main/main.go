@@ -1,20 +1,19 @@
 package main
 
 import (
-	"MyRPC"
+	myrpc "MyRPC"
+	"MyRPC/registry"
 	"MyRPC/xclient"
-	"fmt"
+	"context"
 	"log"
-	"net"
 	"sync"
 	"time"
-	"context"
 )
 
 // 服务端实现 Service 实例
 type AddServiceImpl int
 
-type Args struct{
+type Args struct {
 	Num1 int
 	Num2 int
 }
@@ -25,21 +24,9 @@ func (s AddServiceImpl) Sum(args Args, reply *int) error {
 }
 
 func (s AddServiceImpl) Sleep(args Args, reply *int) error {
-	time.Sleep(time.Second * time.Duration(args.Num1))
+	// time.Sleep(time.Second * time.Duration(args.Num1))
 	*reply = args.Num1 + args.Num2
 	return nil
-}
-
-
-// 启动服务实例
-func startServer(addrCh chan string) {
-	l, _ := net.Listen("tcp", ":0")
-	server := myrpc.NewServer()
-	var asi AddServiceImpl // 先自动赋零值
-	_ = server.Register(&asi)
-	addrCh <- l.Addr().String()
-	fmt.Println(l.Addr().String())
-	server.Accept(l)
 }
 
 func foo(xc *xclient.XClient, ctx context.Context, typ, serviceMethod string, args *Args) {
@@ -58,9 +45,10 @@ func foo(xc *xclient.XClient, ctx context.Context, typ, serviceMethod string, ar
 	}
 }
 
-func call(addr1, addr2 string) {
-	d := xclient.NewMultiServerDiscovery([]string{"tcp@" + addr1, "tcp@" + addr2})
-	xc := xclient.NewXClient(d, xclient.RandomSelect, nil)
+// 客户端调用远程服务的 api
+func call(registryAddr string) {
+	d := xclient.NewDiscoveryCenter(registryAddr, 0)       // 注册服务进程到注册中心
+	xc := xclient.NewXClient(d, xclient.RandomSelect, nil) // 使用 RoundRobin 策略
 	defer func() { _ = xc.Close() }()
 	// send request & receive response
 	var wg sync.WaitGroup
@@ -74,8 +62,8 @@ func call(addr1, addr2 string) {
 	wg.Wait()
 }
 
-func broadcast(addr1, addr2 string) {
-	d := xclient.NewMultiServerDiscovery([]string{"tcp@" + addr1, "tcp@" + addr2})
+func broadcast(registerAddr string) {
+	d := xclient.NewDiscoveryCenter(registerAddr, 0)
 	xc := xclient.NewXClient(d, xclient.RandomSelect, nil)
 	defer func() { _ = xc.Close() }()
 	var wg sync.WaitGroup
@@ -92,19 +80,22 @@ func broadcast(addr1, addr2 string) {
 	wg.Wait()
 }
 
-
 func main() {
 	log.SetFlags(0)
-	ch1 := make(chan string)
-	ch2 := make(chan string)
+	registryAddr := registry.NewRegistry()
 
-	go startServer(ch1)
-	go startServer(ch2)
+	ch1 := make(chan *myrpc.Server)
+	ch2 := make(chan *myrpc.Server)
+	go myrpc.NewServer(registryAddr, ch1)
+	go myrpc.NewServer(registryAddr, ch2)
+	server1 := <-ch1
+	server2 := <-ch2
 
-	addr1 := <-ch1
-	addr2 := <-ch2
+	var asi AddServiceImpl
+	server1.Register(&asi)
+	server2.Register(&asi)
 
 	time.Sleep(time.Second)
-	call(addr1, addr2)
-	broadcast(addr1, addr2)
+	call(registryAddr)
+	broadcast(registryAddr)
 }

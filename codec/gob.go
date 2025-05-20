@@ -52,11 +52,11 @@ func (c *GobCodec) Write(h *Header, body interface{}) (err error) {
 	
 	// 将 header 和 body 编码成二进制数据先后写入 buf 只能够
 	if err = c.enc.Encode(h); err != nil {
-		log.Println("rpc codec: gob error encoding header:", err)
+		log.Println("codec: gob error encoding header:", err)
 	}
 
 	if err = c.enc.Encode(body); err != nil {
-		log.Println("rpc codec: gob error encoding body:", err)
+		log.Println("codec: gob error encoding body:", err)
 	}
 
 	return nil

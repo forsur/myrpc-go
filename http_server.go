@@ -8,7 +8,7 @@ import (
 
 const (
 	connected        = "200 Connected to RPC server"
-	defaultRPCPath   = "/_myrpc_"
+	defaultRPCPath   = "/myrpc"
 	defaultDebugPath = "/debug/myrpc"
 )
 
@@ -56,10 +56,4 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 func (server *Server) HandleHTTP() {
 	http.Handle(defaultRPCPath, server) // 我们的 server 实现了 Handler 接口
-}
-
-// 类似于 Accept
-// Go的 http.Server 设计为并发处理多个客户端连接
-func HandleHTTP() {
-	DefaultServer.HandleHTTP()
 }

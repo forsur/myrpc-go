@@ -202,6 +202,7 @@ func dialWithTimeout(f newClientFunc, network, address string, opts ...*Option) 
 	}
 
 	/*
+		使用 net 包的 DialTimeout 方法，获取连接 net.Conn
 		network: 指定网络协议，如 tcp / udp / unix 等
 		address: 形如 host:port
 		timeout: 如果超时时间内没有成功连接，返回 error
@@ -303,7 +304,6 @@ func (client *Client) Call(ctx context.Context, serviceMethod string, args, repl
 		client.removeCall(call.Seq)
 		return errors.New("client: Call timeout" + ctx.Err().Error())
 	case result := <-call.Done:
-		fmt.Println("received")
 		return result.Error
 	}
 }
