@@ -97,7 +97,7 @@ func NewDiscoveryCenter(registerAddr string, timeout time.Duration) *DiscoveryCe
 func (d *DiscoveryCenter) Refresh() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// 两次更新间隔小于 timeout，不需要刷新
+	// 两次更新间隔小于 timeout，不需要重新拉取
 	if d.lastUpdate.Add(d.timeout).After(time.Now()) {
 		return nil
 	}
