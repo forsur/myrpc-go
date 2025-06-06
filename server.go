@@ -38,8 +38,8 @@ type Option struct {
 	CodecType   codec.Type
 
 	// 超时处理参数
-	ConnectionTimeout time.Duration 
-	HandleTimeout time.Duration
+	ConnectionTimeout time.Duration
+	HandleTimeout     time.Duration
 }
 
 var DefaultOption = &Option{
@@ -55,10 +55,25 @@ type Server struct {
 }
 
 func NewServer(registryAddr string, svr chan *Server) {
-	l, _ := net.Listen("tcp", ":0")
+	// 在Windows上强制使用IPv4地址避免IPv6连接问题
+	l, err := net.Listen("tcp4", ":0")
+	if err != nil {
+		log.Fatal("server: failed to listen:", err)
+	}
+
 	server := Server{}
+	// 获取实际的监听地址
+	addr := l.Addr().String()
+	// 在Windows上，如果地址是 ":port" 格式，转换为 "127.0.0.1:port"
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	serverAddr := "tcp@" + addr
+
+	log.Printf("Server starting at: %s", serverAddr)
+
 	// 新起的 server 定期向 registry 发送心跳
-	registry.Heartbeat(registryAddr, "tcp@" + l.Addr().String(), 0)
+	registry.Heartbeat(registryAddr, serverAddr, 0)
 	svr <- &server
 	server.Accept(l)
 }
@@ -161,8 +176,8 @@ func (svr *Server) serveCodec(cc codec.Codec, opt *Option) {
 type request struct {
 	h            *codec.Header
 	argv, replyv reflect.Value
-	mtype 		 *methodType
-	svc 		 *service
+	mtype        *methodType
+	svc          *service
 }
 
 // 最终目标是取得 argv 类型的指针，供 cc.ReadBody() 使用
@@ -185,7 +200,7 @@ func (svr *Server) readRequest(cc codec.Codec) (*request, error) {
 	if req.argv.Type().Kind() != reflect.Ptr {
 		argvi = req.argv.Addr().Interface() // 转为指针
 	}
-	
+
 	err = cc.ReadBody(argvi)
 	if err != nil {
 		log.Println("server: code.Codec ReadBody() wrong")
@@ -194,7 +209,6 @@ func (svr *Server) readRequest(cc codec.Codec) (*request, error) {
 
 	return req, nil
 }
-
 
 func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
 	var h codec.Header
@@ -234,8 +248,8 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 	}()
 
 	if timeout == 0 {
-		<- called
-		<- sent
+		<-called
+		<-sent
 		return
 	}
 	select {
@@ -256,4 +270,3 @@ func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{
 		log.Println("rpc server: write response error:", err)
 	}
 }
-

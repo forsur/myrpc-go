@@ -109,16 +109,24 @@ func (d *DiscoveryCenter) Refresh() error {
 		log.Println("discovery: refresh: get from registry error", err)
 		return err
 	}
+	defer rsp.Body.Close() // 确保关闭响应体
 
 	// 接收注册中心的响应
-	servers := strings.Split(rsp.Header.Get("X-rpc-servers"), ",")
+	serverHeader := rsp.Header.Get("X-rpc-servers")
+	log.Printf("discovery: received server header: '%s'", serverHeader)
+
+	servers := strings.Split(serverHeader, ",")
 	d.servers = make([]string, 0)
 	for _, server := range servers {
-		if strings.TrimSpace(server) != "" {
-			d.servers = append(d.servers, strings.TrimSpace(server))
+		server = strings.TrimSpace(server)
+		if server != "" {
+			d.servers = append(d.servers, server)
 		}
 	}
 	d.lastUpdate = time.Now()
+
+	// 添加调试信息
+	log.Printf("discovery: updated servers list: %v", d.servers)
 	return nil
 }
 

@@ -19,30 +19,39 @@ import (
 )
 
 const (
-	defaultPath = "/myrpc/registry"
+	defaultPath    = "/myrpc/registry"
 	defaultTimeout = time.Minute * 5
 )
 
-
-
 type Registry struct {
 	timeout time.Duration
-	mu sync.Mutex // 为下面的 map 服务
+	mu      sync.Mutex // 为下面的 map 服务
 	servers map[string]*ServerItem
 }
 
 type ServerItem struct {
-	Addr string
+	Addr      string
 	startTime time.Time
 }
 
-
 func NewRegistry() string {
-	l, _ := net.Listen("tcp", ":8088")
+	// 强制使用IPv4避免Windows上的IPv6问题
+	l, err := net.Listen("tcp4", ":8088")
+	if err != nil {
+		log.Fatal("registry: failed to listen:", err)
+	}
+
 	registryAddr := l.Addr().String()
+	// 确保地址格式正确
+	if strings.HasPrefix(registryAddr, ":") {
+		registryAddr = "127.0.0.1" + registryAddr
+	}
+
 	registry := New(defaultTimeout)
 	registry.HandleHTTP(defaultPath)
+
 	go func() {
+		log.Printf("Registry HTTP server starting on %s", registryAddr)
 		_ = http.Serve(l, nil)
 	}()
 	go func() { // 定时检测心跳
@@ -52,9 +61,11 @@ func NewRegistry() string {
 		}
 	}()
 	time.Sleep(time.Second)
-	return "http://" + registryAddr + defaultPath
-}
 
+	fullURL := "http://" + registryAddr + defaultPath
+	log.Printf("Registry started at: %s", fullURL)
+	return fullURL
+}
 
 func New(timeout time.Duration) *Registry {
 	return &Registry{
@@ -62,7 +73,6 @@ func New(timeout time.Duration) *Registry {
 		timeout: timeout,
 	}
 }
-
 
 // *Registry 实现了 http.Handler 接口
 // 用于接收 server 的保活心跳
@@ -86,9 +96,6 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (r *Registry) HandleHTTP(registryPath string) {
 	http.Handle(registryPath, r) // 路由注册；尚未启动持续监听
 }
-
-
-
 
 // 增加注册的进程 / 更新服务进程的启动时间
 func (r *Registry) putServer(addr string) {
@@ -118,17 +125,10 @@ func (r *Registry) getAliveServers() []string {
 	return ret
 }
 
-
-
-
-
-
-
-
 // 为 server 提供，用于 server 定期向 Registry 发送心跳
 func Heartbeat(registry, addr string, duration time.Duration) {
 	if duration == 0 {
-		duration = defaultTimeout - time.Duration(1) * time.Minute // 将 1 转换为 time.Duration 类型
+		duration = defaultTimeout - time.Duration(1)*time.Minute // 将 1 转换为 time.Duration 类型
 	}
 	sendHeartbeat(registry, addr)
 	go func() {
@@ -152,5 +152,3 @@ func sendHeartbeat(registry, addr string) error {
 	}
 	return nil
 }
-
-

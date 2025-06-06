@@ -29,3 +29,9 @@
 9. 心跳机制：服务端启动 server 的同时通过协程定期向注册中心进程发送心跳，服务端通过 ServeHTTP 方法，在每个 HTTP 请求到来时，都会调用一次全员健康检查以及心跳更新
 
 10. 考虑到网络 I/O 成本，在发现中心本地维护一个 servers 的缓存，通过 超时时间 + 懒加载 的方式从注册中心获取最新服务列表
+
+
+
+go run registry_app/registry_app.go
+
+go run server_app/server_app.go

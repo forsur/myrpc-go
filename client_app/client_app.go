@@ -1,8 +1,6 @@
 package main
 
 import (
-	myrpc "MyRPC"
-	"MyRPC/registry"
 	"MyRPC/xclient"
 	"context"
 	"log"
@@ -10,24 +8,14 @@ import (
 	"time"
 )
 
-// 服务端实现 Service 实例
-type AddServiceImpl int
-
 type Args struct {
 	Num1 int
 	Num2 int
 }
 
-func (s AddServiceImpl) Sum(args Args, reply *int) error {
-	*reply = args.Num1 + args.Num2
-	return nil
-}
-
-func (s AddServiceImpl) Sleep(args Args, reply *int) error {
-	// time.Sleep(time.Second * time.Duration(args.Num1))
-	*reply = args.Num1 + args.Num2
-	return nil
-}
+const (
+	registryURL = "http://127.0.0.1:8088/myrpc/registry"
+)
 
 func foo(xc *xclient.XClient, ctx context.Context, typ, serviceMethod string, args *Args) {
 	var reply int
@@ -81,22 +69,7 @@ func broadcast(registerAddr string) {
 }
 
 func main() {
-	log.SetFlags(0)
-	registryAddr := registry.NewRegistry()
-	log.Println(registryAddr)
-
-	ch1 := make(chan *myrpc.Server)
-	ch2 := make(chan *myrpc.Server)
-	go myrpc.NewServer(registryAddr, ch1)
-	go myrpc.NewServer(registryAddr, ch2)
-	server1 := <-ch1
-	server2 := <-ch2
-
-	var asi AddServiceImpl
-	server1.Register(&asi)
-	server2.Register(&asi)
-
 	time.Sleep(time.Second)
-	call(registryAddr)
-	broadcast(registryAddr)
+	call(registryURL)
+	broadcast(registryURL)
 }

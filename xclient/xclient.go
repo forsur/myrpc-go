@@ -1,18 +1,19 @@
 package xclient
 
 import (
-	"MyRPC"
+	myrpc "MyRPC"
 	"context"
 	"io"
+	"log"
 	"reflect"
 	"sync"
 )
 
 type XClient struct {
-	d Discovery
-	mode SelectMode
-	opt *myrpc.Option
-	mu sync.Mutex
+	d       Discovery
+	mode    SelectMode
+	opt     *myrpc.Option
+	mu      sync.Mutex
 	clients map[string]*myrpc.Client
 }
 
@@ -20,9 +21,9 @@ var _ io.Closer = (*XClient)(nil)
 
 func NewXClient(d Discovery, mode SelectMode, opt *myrpc.Option) *XClient {
 	return &XClient{
-		d: d,
-		mode: mode,
-		opt: opt,
+		d:       d,
+		mode:    mode,
+		opt:     opt,
 		clients: make(map[string]*myrpc.Client),
 	}
 }
@@ -37,18 +38,19 @@ func (xc *XClient) Close() error {
 	return nil
 }
 
-
-
 func (xc *XClient) dial(rpcAddr string) (*myrpc.Client, error) {
 	xc.mu.Lock()
 	defer xc.mu.Unlock()
 	client := xc.clients[rpcAddr] // map 中添加服务端地址 rpcAddr 和 client 的映射，缓存起来
 	if client == nil {
+		log.Printf("xclient: dialing new connection to %s", rpcAddr)
 		var err error
 		client, err = myrpc.XDial(rpcAddr, xc.opt)
 		if err != nil {
+			log.Printf("xclient: failed to dial %s: %v", rpcAddr, err)
 			return nil, err
 		}
+		log.Printf("xclient: successfully connected to %s", rpcAddr)
 		xc.clients[rpcAddr] = client
 	}
 	return client, nil
@@ -71,8 +73,6 @@ func (xc *XClient) Call(ctx context.Context, serviceMethod string, args, reply i
 	}
 	return xc.callWithAddr(rpcAddr, ctx, serviceMethod, args, reply)
 }
-
-
 
 func (xc *XClient) Broadcast(ctx context.Context, serviceMethod string, args, reply interface{}) error {
 	servers, err := xc.d.GetAll()
@@ -106,5 +106,3 @@ func (xc *XClient) Broadcast(ctx context.Context, serviceMethod string, args, re
 	wg.Wait()
 	return e
 }
-
-
