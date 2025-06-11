@@ -30,8 +30,10 @@
 
 10. 考虑到网络 I/O 成本，在发现中心本地维护一个 servers 的缓存，通过 超时时间 + 懒加载 的方式从注册中心获取最新服务列表
 
+11. 错误处理：服务端将错误放到 header(header 中标识了 serviceMethod, 用于对应 call 和 rsp 的 seqid(client 端自增), 和 string 类型的 error) 中回传给客户端；客户端反序列化出错误，然后放到 call 中，最后在用户调用的方法中将错误作为返回值
 
 
-go run registry_app/registry_app.go
 
-go run server_app/server_app.go
+设计思想：
+// 这样设计的原因是，rpc 框架和方法解耦，肯定不能直接通过比如 grpc.xxx 来调用用户定义的方法，中间增加了一个 pb 生成的中间层
+// 当然，如果退一步支持 grpc.Call("method name", args, req) 这种，其实是不需要 pb 生成的客户端的

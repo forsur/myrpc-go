@@ -223,7 +223,7 @@ func dialWithTimeout(f newClientFunc, network, address string, opts ...*Option) 
 	// 使用闭包，开启协程异步创建一个 client，通过 chan 拿到返回内容
 	// 防止 NewClient 执行超时
 	go func() {
-		client, err := f(conn, opt)
+		client, err := f(conn, opt) /* 关键：创建一个 client 结构体的实例 */
 		ch <- clientResult{client: client, err: err}
 	}()
 
