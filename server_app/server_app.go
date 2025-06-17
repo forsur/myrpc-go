@@ -2,6 +2,7 @@ package main
 
 import (
 	myrpc "MyRPC"
+	"MyRPC/gateway"
 	"log"
 )
 
@@ -36,6 +37,14 @@ func main() {
 	server.Register(&AddServiceImpl{})
 	log.Println("Service registered, server is running...")
 
+
+	// 激活网关
+	gw := gateway.NewGateway(server, "9000")
+	gw.StartHttpProxy()
+	defer gw.Stop()
+
 	// 保持服务器运行
 	select {}
+
+
 }

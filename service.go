@@ -19,7 +19,7 @@ func (m *methodType) NumCalls() uint64 {
 }
 
 // 创建 ArgType 所在类型的值（实例）
-func (m *methodType) newArgv() reflect.Value {
+func (m *methodType) NewArgv() reflect.Value {
 	var argv reflect.Value
 	if m.ArgType.Kind() == reflect.Ptr {
 		argv = reflect.New(m.ArgType.Elem()) // reflect.New() 创建一个指定类型的值（默认的零值），返回指向这个值的反射指针
@@ -29,7 +29,7 @@ func (m *methodType) newArgv() reflect.Value {
 	return argv
 }
 
-func (m *methodType) newReplyv() reflect.Value {
+func (m *methodType) NewReplyv() reflect.Value {
 	replyv := reflect.New(m.ReplyType.Elem())
 	switch m.ReplyType.Elem().Kind() {
 	case reflect.Map:

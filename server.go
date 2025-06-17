@@ -7,7 +7,7 @@
 | Option{MagicNumber: xxx, CodecType: xxx} | Header{ServiceMethod ...} | Body interface{} |
 | <------      固定 JSON 编码      ------>  | <-------    编码方式由 CodeType 决定    ------->|
 
-response 的 header 沿用 request 的 header
+response 的 header 沿用 Request 的 header
 
 工作流程：
 1. 一个 server 每监听到一个连接，就启动一个协程处理这个连接。
@@ -34,7 +34,7 @@ import (
 const MagicNumber = 0x3bef5c
 
 type Option struct {
-	MagicNumber int // 标记这是一个 myrpc 的 request
+	MagicNumber int // 标记这是一个 myrpc 的 Request
 	CodecType   codec.Type
 
 	// 超时处理参数
@@ -51,7 +51,8 @@ var DefaultOption = &Option{
 }
 
 type Server struct {
-	serviceMap sync.Map
+	ServiceMap sync.Map
+	Address    string
 }
 
 func NewServer(registryAddr string, svr chan *Server) {
@@ -64,11 +65,16 @@ func NewServer(registryAddr string, svr chan *Server) {
 	server := Server{}
 	// 获取实际的监听地址
 	addr := l.Addr().String()
-	// 在Windows上，如果地址是 ":port" 格式，转换为 "127.0.0.1:port"
-	if strings.HasPrefix(addr, ":") {
+	// 确保地址格式正确，将 0.0.0.0 替换为 127.0.0.1 用于客户端连接
+	if strings.HasPrefix(addr, "0.0.0.0:") {
+		addr = strings.Replace(addr, "0.0.0.0", "127.0.0.1", 1)
+	} else if strings.HasPrefix(addr, ":") {
 		addr = "127.0.0.1" + addr
 	}
 	serverAddr := "tcp@" + addr
+
+	// 初始化服务器地址
+	server.Address = addr
 
 	log.Printf("Server starting at: %s", serverAddr)
 
@@ -81,21 +87,21 @@ func NewServer(registryAddr string, svr chan *Server) {
 // 注册服务到 sync.Map 中
 func (svr *Server) Register(rcvr interface{}) error {
 	s := newService(rcvr) // rcvr 类似于 AuthServiceImpl，是一个绑定了若干 rpc 方法的结构体
-	_, isDup := svr.serviceMap.LoadOrStore(s.name, s)
+	_, isDup := svr.ServiceMap.LoadOrStore(s.name, s)
 	if isDup {
 		return errors.New("server: service already exist" + s.name)
 	}
 	return nil
 }
 
-func (server *Server) findService(serviceMethod string) (svc *service, mtype *methodType, err error) {
+func (server *Server) FindService(serviceMethod string) (svc *service, mtype *methodType, err error) {
 	dotIdx := strings.LastIndex(serviceMethod, ".")
 	if dotIdx < 0 {
 		err = errors.New("server: wrong service.method format")
 		return
 	}
 	serviceName, methodName := serviceMethod[:dotIdx], serviceMethod[dotIdx+1:]
-	serviceStruct, ok := server.serviceMap.Load(serviceName)
+	serviceStruct, ok := server.ServiceMap.Load(serviceName)
 	if !ok {
 		err = errors.New("server: cann't find service")
 		return
@@ -161,8 +167,8 @@ func (svr *Server) serveCodec(cc codec.Codec, opt *Option) {
 			if req == nil {
 				break
 			}
-			req.h.Error = err.Error()
-			svr.sendResponse(cc, req.h, invalidRequest, sending)
+			req.H.Error = err.Error()
+			svr.sendResponse(cc, req.H, invalidRequest, sending)
 			continue
 		}
 		wg.Add(1)
@@ -173,28 +179,28 @@ func (svr *Server) serveCodec(cc codec.Codec, opt *Option) {
 	_ = cc.Close()
 }
 
-type request struct {
-	h            *codec.Header
+type Request struct {
+	H            *codec.Header
 	argv, replyv reflect.Value
-	mtype        *methodType
-	svc          *service
+	Mtype        *methodType
+	Svc          *service
 }
 
 // 最终目标是取得 argv 类型的指针，供 cc.ReadBody() 使用
-func (svr *Server) readRequest(cc codec.Codec) (*request, error) {
+func (svr *Server) readRequest(cc codec.Codec) (*Request, error) {
 	h, err := svr.readRequestHeader(cc)
 	if err != nil {
 		return nil, err
 	}
-	req := &request{h: h}
-	req.svc, req.mtype, err = svr.findService(h.ServiceMethod)
+	req := &Request{H: h}
+	req.Svc, req.Mtype, err = svr.FindService(h.ServiceMethod)
 	if err != nil {
 		return req, err
 	}
 
 	// 基于 server 端 map 中存储的 method 信息拿到参数和返回值信息
-	req.argv = req.mtype.newArgv()
-	req.replyv = req.mtype.newReplyv()
+	req.argv = req.Mtype.NewArgv()
+	req.replyv = req.Mtype.NewReplyv()
 
 	argvi := req.argv.Interface() // 通过 reflect.Value 获取原始值（空）
 	if req.argv.Type().Kind() != reflect.Ptr {
@@ -211,17 +217,17 @@ func (svr *Server) readRequest(cc codec.Codec) (*request, error) {
 }
 
 func (svr *Server) readRequestHeader(cc codec.Codec) (*codec.Header, error) {
-	var h codec.Header
-	if err := cc.ReadHeader(&h); err != nil {
+	var H codec.Header
+	if err := cc.ReadHeader(&H); err != nil {
 		if err != io.EOF && err != io.ErrUnexpectedEOF {
 			log.Println("rpc server, read header error:", err)
 		}
 		return nil, err
 	}
-	return &h, nil
+	return &H, nil
 }
 
-func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
+func (svr *Server) handleRequest(cc codec.Codec, req *Request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
 
 	called := make(chan struct{}, 1)
@@ -231,19 +237,19 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 	atomic.StoreUint32(&isTimeout, 0) // 写入（对其他 goroutine 可见）
 
 	go func() {
-		err := req.svc.call(req.mtype, req.argv, req.replyv)
+		err := req.Svc.call(req.Mtype, req.argv, req.replyv)
 		isTimeoutVal := atomic.LoadUint32(&isTimeout)
 		if isTimeoutVal == 1 {
 			return
 		}
 		called <- struct{}{}
 		if err != nil {
-			req.h.Error = err.Error()
-			svr.sendResponse(cc, req.h, invalidRequest, sending)
+			req.H.Error = err.Error()
+			svr.sendResponse(cc, req.H, invalidRequest, sending)
 			sent <- struct{}{}
 			return
 		}
-		svr.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		svr.sendResponse(cc, req.H, req.replyv.Interface(), sending)
 		sent <- struct{}{}
 	}()
 
@@ -255,18 +261,18 @@ func (svr *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mut
 	select {
 	case <-time.After(timeout):
 		atomic.StoreUint32(&isTimeout, 1)
-		req.h.Error = "server: execute method timeout"
-		svr.sendResponse(cc, req.h, invalidRequest, sending)
+		req.H.Error = "server: execute method timeout"
+		svr.sendResponse(cc, req.H, invalidRequest, sending)
 	case <-called:
 		<-sent
 	}
 }
 
 // 将传入的 rsp header 和 rsp body 作为 rsp 写入到 conn
-func (svr *Server) sendResponse(cc codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
+func (svr *Server) sendResponse(cc codec.Codec, H *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
 	defer sending.Unlock()
-	if err := cc.Write(h, body); err != nil {
+	if err := cc.Write(H, body); err != nil {
 		log.Println("rpc server: write response error:", err)
 	}
 }

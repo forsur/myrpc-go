@@ -57,7 +57,7 @@ func (xc *XClient) dial(rpcAddr string) (*myrpc.Client, error) {
 }
 
 func (xc *XClient) callWithAddr(rpcAddr string, ctx context.Context, serviceMethod string, args, reply interface{}) error {
-	client, err := xc.dial(rpcAddr)
+	client, err := xc.dial(rpcAddr) // 从 xc 的缓存中拿到 addr 对应的 client 实例
 	if err != nil {
 		return err
 	}

@@ -119,16 +119,16 @@ func (client *Client) receive() {
 	var err error
 	for err == nil {
 		// 读取响应的核心：cc 的 ReadHeader / ReadBody 方法，也就是 glob 的 decode
-		var h codec.Header
-		if err = client.cc.ReadHeader(&h); err != nil {
+		var H codec.Header
+		if err = client.cc.ReadHeader(&H); err != nil {
 			break
 		}
-		call := client.removeCall(h.Seq)
+		call := client.removeCall(H.Seq)
 		switch {
 		case call == nil:
 			err = client.cc.ReadBody(nil)
-		case h.Error != "":
-			call.Error = fmt.Errorf("%s", h.Error)
+		case H.Error != "":
+			call.Error = fmt.Errorf("%s", H.Error)
 			err = client.cc.ReadBody(nil)
 			call.done()
 		default:

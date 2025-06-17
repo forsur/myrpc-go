@@ -104,7 +104,7 @@ func (d *DiscoveryCenter) Refresh() error {
 	log.Println("discovery: refresh servers from registry:", d.registryAddr)
 
 	// 发送一个 Get 请求到注册中心
-	rsp, err := http.Get(d.registryAddr)
+	rsp, err := http.Get(d.registryAddr) /* 核心方法 */
 	if err != nil {
 		log.Println("discovery: refresh: get from registry error", err)
 		return err
